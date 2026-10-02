@@ -10,10 +10,9 @@ import secrets
 import socket
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import httpx
 import uvicorn
@@ -33,7 +32,7 @@ MENUS = {
     "M05": "아이스티",
 }
 
-KST = ZoneInfo("Asia/Seoul")
+KST = timezone(timedelta(hours=9), name="KST")
 TOKEN_TTL_SECONDS = 300
 CHALLENGE_TTL_SECONDS = 60
 MAX_NAME_LENGTH = 20
