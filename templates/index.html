@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f7f4ee"><title>한 잔 · 오늘의 커피 주문</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script defer src="{{ url_for('static', filename='app.js') }}"></script>
+</head>
+<body>
+<main class="app">
+  <header class="brand"><a href="/" aria-label="한 잔 홈"><span class="brand-icon">☕</span> 한 잔<span class="brand-dot">.</span></a><span class="channel">#커피주문 <span class="live-dot"></span></span></header>
+  {% if mock %}<div class="mode-banner">연습 모드 · Slack에 전송되지 않아요</div>{% endif %}
+  <section class="hero"><p class="eyebrow">A LITTLE COFFEE BREAK</p><h1>오늘도, 기분 좋은<br><span>한 잔 하세요.</span></h1><p class="hero-description">내 이름으로 주문하는 오늘의 커피</p><div class="hero-art" aria-hidden="true"><div class="steam s1"></div><div class="steam s2"></div><div class="saucer"></div><div class="hero-cup"><span>한 잔.</span></div><div class="hero-handle"></div><div class="bean b1"></div><div class="bean b2"></div></div><div class="hero-footer"><span>주문은 간단하게, 여유는 충분하게.</span><span>01 — 0{{ menus|length }}</span></div></section>
+  <section class="device-panel" aria-labelledby="device-title"><div class="device-top"><span class="step-icon" aria-hidden="true">↗</span><div><h2 id="device-title">먼저, 스마트폰을 확인할게요</h2><p id="device-description">아래 버튼을 누르고 휴대폰을 살짝 기울여 주세요.</p></div></div><button id="verify-button" class="verify-button" type="button">스마트폰 인증하기 <span aria-hidden="true">→</span></button><p id="device-status" class="device-status" aria-live="polite"></p></section>
+  <form id="order-form" novalidate>
+    <section class="name-section"><label for="customer-name"><span class="step">01</span> 주문자 이름</label><p class="section-help">커피를 받으실 분의 이름을 알려 주세요.</p><input id="customer-name" name="name" type="text" maxlength="20" placeholder="이름을 입력해 주세요" autocomplete="name" enterkeyhint="done" required><p id="name-error" class="field-error" aria-live="polite"></p></section>
+    <fieldset class="menu-section"><legend><span class="step">02</span> 오늘의 메뉴 <span class="menu-count">{{ menus|length }}가지</span></legend><p class="section-help">마음에 드는 한 잔을 선택해 주세요.</p><div class="menu-list">
+    {% for code, menu in menus.items() %}<label class="menu-card"><input type="radio" name="menu_code" value="{{ code }}" required><span class="coffee-thumb {{ menu.style }}" aria-hidden="true"><span class="mini-saucer"></span><span class="mini-cup"></span><span class="mini-handle"></span></span><span class="menu-copy"><span class="menu-code">{{ code }}</span><strong>{{ menu.name }}</strong><span class="menu-description">{{ menu.description }}</span></span><span class="radio-mark" aria-hidden="true"></span></label>{% endfor %}
+    </div></fieldset>
+    <p class="menu-note">주문 내용은 Slack #커피주문 채널로 전송됩니다.</p>
+    <div id="order-error" class="order-error" role="alert" hidden></div>
+    <footer class="page-footer">작은 쉼표 하나, 커피 한 잔.<span>HANJAN COFFEE ORDER</span></footer>
+    <div class="order-bar"><div class="order-summary"><span>선택한 메뉴</span><strong id="selected-menu">한 잔을 골라 주세요</strong></div><button id="order-button" type="submit" disabled><span id="order-button-label">주문하기</span><span aria-hidden="true">↗</span></button><p id="order-hint">스마트폰 인증 후 주문할 수 있어요.</p></div>
+  </form>
+  <section id="receipt" class="receipt" aria-live="polite" hidden><div class="receipt-check" aria-hidden="true">✓</div><p class="eyebrow">YOUR COFFEE IS ON ITS WAY</p><h2 id="receipt-title">주문 완료</h2><p id="receipt-subtitle"></p><dl><div><dt>이름</dt><dd id="receipt-name"></dd></div><div><dt>메뉴 코드</dt><dd id="receipt-code"></dd></div><div><dt>메뉴명</dt><dd id="receipt-menu"></dd></div><div><dt>주문 시간</dt><dd id="receipt-time"></dd></div><div><dt>주문 상태</dt><dd id="receipt-state"></dd></div></dl><p class="receipt-note">맛있는 커피와 함께 잠깐의 여유를 즐기세요.</p><button id="new-order" type="button" class="verify-button">다른 한 잔 주문하기 →</button></section>
+</main>
+</body>
+</html>
