@@ -2,6 +2,8 @@
 
 실제 스마트폰에서 이름과 메뉴를 선택해 Slack **#커피주문** 채널로 주문하는 실습 앱입니다. Python + Flask 단일 서버와 순수 HTML/CSS/JS로 구성했습니다.
 
+완성된 앱은 `main` 브랜치에 있습니다. 초기 설정의 `웹에이전트` 브랜치는 별도로 유지합니다.
+
 ## 빠른 실행
 
 Python 3.10 이상이 필요합니다. Windows에서는 **`start.bat`를 더블클릭**하면 가상환경 생성, 의존성 설치, `.env` 준비와 실행을 자동으로 합니다. 설치된 Python이 없으면 Codex의 번들 Python도 찾아 사용합니다.
@@ -50,7 +52,7 @@ ngrok config add-authtoken YOUR_NGROK_AUTHTOKEN
 ngrok http 8000
 ```
 
-3. 표시된 **`https://…ngrok-free.app`** 주소를 실제 스마트폰의 **Safari / Chrome**에서 엽니다. 최초 ngrok 안내가 뜨면 Visit Site를 누릅니다. Slack 안의 내장 브라우저보다 기본 브라우저 사용을 권장합니다.
+3. ngrok에 표시된 **HTTPS 접속 주소**를 실제 스마트폰의 **Safari / Chrome**에서 엽니다. 최초 ngrok 안내가 뜨면 Visit Site를 누릅니다. Slack 안의 내장 브라우저보다 기본 브라우저 사용을 권장합니다.
 4. **스마트폰 인증하기**를 누릅니다. iPhone은 움직임 및 방향 권한을 허용하고, 휴대폰을 살짝 기울입니다. Android는 Chrome의 사이트 설정에서 움직임 센서가 허용되어 있어야 합니다.
 5. 이름과 메뉴를 선택해 주문합니다. 인증 유효기간은 5분이고 만료되면 다시 인증합니다.
 
@@ -127,4 +129,4 @@ python tests/curl_checks.py
 
 실습용 단일 프로세스 서버이며 Flask 디버그 모드는 꺼져 있습니다. 여러 서버 프로세스로 확장하거나 공개 상용 서비스로 운영하는 구성은 범위 밖입니다.
 
-참고: [센서 권한과 HTTPS](https://developer.mozilla.org/en-US/docs/Web/API/DeviceMotionEvent/requestPermission_static), [Slack Incoming Webhooks](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/), [ngrok 빠른 시작](https://ngrok.com/docs/getting-started/).
+참고: [센서 권한과 HTTPS](https://developer.mozilla.org/en-US/docs/Web/API/DeviceMotionEvent/requestPermission_static), [Slack Incoming Webhooks](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/), [ngrok 빠른 시작](https://ngrok.com/docs/gateway/endpoints/agent-cli-quickstart).
