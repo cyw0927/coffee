@@ -24,14 +24,6 @@ from pydantic import BaseModel, Field
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
-MENUS = {
-    "M01": "아이스아메리카노",
-    "M02": "아이스라떼",
-    "M03": "카페라떼",
-    "M04": "말차라떼",
-    "M05": "아이스티",
-}
-
 KST = timezone(timedelta(hours=9), name="KST")
 TOKEN_TTL_SECONDS = 300
 CHALLENGE_TTL_SECONDS = 60
@@ -42,11 +34,17 @@ TOKEN_SECRET = os.getenv("DEVICE_TOKEN_SECRET", "").encode("utf-8") or secrets.t
 SLACK_MOCK = os.getenv("SLACK_MOCK", "0") == "1"
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip()
 PORT = int(os.getenv("PORT", "8000"))
+SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "").strip()
+SLACK_MENU_CHANNEL_ID = os.getenv("SLACK_MENU_CHANNEL_ID", "").strip()
+MENU_CACHE_SECONDS = int(os.getenv("MENU_CACHE_SECONDS", "30"))
 
 challenges: dict[str, float] = {}
 processed_orders: dict[str, tuple[int, dict[str, Any]]] = {}
 mock_slack_messages: list[str] = []
 order_lock = asyncio.Lock()
+menu_lock = asyncio.Lock()
+menu_cache: dict[str, str] = {}
+menu_cache_expires_at = 0.0
 
 
 class DeviceProof(BaseModel):
@@ -62,6 +60,89 @@ class OrderRequest(BaseModel):
     name: str = Field(max_length=100)
     menu_code: str = Field(min_length=1, max_length=20)
     device_token: str = Field(min_length=20, max_length=2048)
+
+
+def validate_menu_items(items: Any) -> dict[str, str]:
+    if not isinstance(items, list):
+        raise ValueError("메뉴 데이터는 JSON 배열이어야 합니다.")
+
+    menus: dict[str, str] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code", "")).strip()
+        name = str(item.get("name", "")).strip()
+        if code and name:
+            menus[code] = name
+
+    if not menus:
+        raise ValueError("유효한 메뉴가 없습니다.")
+    return menus
+
+
+def parse_menu_message(text: str) -> dict[str, str] | None:
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char != "[":
+            continue
+        try:
+            value, _ = decoder.raw_decode(text[index:])
+            return validate_menu_items(value)
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return None
+
+
+def load_menus_from_file() -> dict[str, str]:
+    menu_path = BASE_DIR / "menus.json"
+    with menu_path.open("r", encoding="utf-8") as fp:
+        return validate_menu_items(json.load(fp))
+
+
+async def load_menus() -> dict[str, str]:
+    """Slack 읽기 권한이 있으면 최신 메뉴 공지를 읽고, 없으면 menus.json을 읽는다."""
+    global menu_cache, menu_cache_expires_at
+
+    now = time.time()
+    if menu_cache and menu_cache_expires_at > now:
+        return dict(menu_cache)
+
+    async with menu_lock:
+        now = time.time()
+        if menu_cache and menu_cache_expires_at > now:
+            return dict(menu_cache)
+
+        menus: dict[str, str] | None = None
+
+        if SLACK_BOT_TOKEN and SLACK_MENU_CHANNEL_ID:
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    response = await client.get(
+                        "https://slack.com/api/conversations.history",
+                        headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                        params={"channel": SLACK_MENU_CHANNEL_ID, "limit": 100},
+                    )
+                response.raise_for_status()
+                payload = response.json()
+                if not payload.get("ok"):
+                    raise RuntimeError(payload.get("error", "Slack API 오류"))
+
+                for message in payload.get("messages", []):
+                    menus = parse_menu_message(message.get("text", ""))
+                    if menus:
+                        break
+
+                if not menus:
+                    raise RuntimeError("Slack 채널에서 메뉴 JSON 공지를 찾지 못했습니다.")
+            except (httpx.HTTPError, ValueError, RuntimeError) as exc:
+                print(f"[MENU] Slack 메뉴 읽기 실패: {exc} · menus.json으로 대체합니다.")
+
+        if menus is None:
+            menus = load_menus_from_file()
+
+        menu_cache = menus
+        menu_cache_expires_at = time.time() + MENU_CACHE_SECONDS
+        return dict(menu_cache)
 
 
 def get_lan_ip() -> str:
@@ -206,6 +287,8 @@ async def lifespan(_: FastAPI):
     print("=" * 58)
     print(f"커피 주문 서버 시작 · Slack 모드: {mode}")
     print(f"스마트폰 접속 주소: http://{get_lan_ip()}:{PORT}")
+    source = "Slack 채널" if SLACK_BOT_TOKEN and SLACK_MENU_CHANNEL_ID else "menus.json"
+    print(f"메뉴 소스: {source}")
     print("센서 API가 HTTP에서 제한되면 README의 HTTPS/ngrok 방법을 사용하세요.")
     print("=" * 58)
     yield
@@ -233,7 +316,8 @@ async def index(request: Request):
 async def get_menus(request: Request):
     if not is_mobile_request(request):
         return JSONResponse({"detail": "스마트폰에서 접속해 주세요."}, status_code=403)
-    return [{"code": code, "name": name} for code, name in MENUS.items()]
+    menus = await load_menus()
+    return [{"code": code, "name": name} for code, name in menus.items()]
 
 
 @app.post("/api/device/challenge")
@@ -289,7 +373,8 @@ async def order(payload: OrderRequest, request: Request):
     except ValueError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=400)
 
-    menu_name = MENUS.get(payload.menu_code)
+    menus = await load_menus()
+    menu_name = menus.get(payload.menu_code)
     if menu_name is None:
         return JSONResponse({"detail": "존재하지 않는 메뉴 코드입니다."}, status_code=400)
 
