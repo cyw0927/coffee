@@ -23,7 +23,7 @@ def main():
         raise SystemExit("curl을 설치한 뒤 다시 실행해 주세요.")
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        app = create_app({"DATABASE": root / "orders.sqlite3", "SLACK_MOCK": True, "SECRET_KEY": "curl-test-only", "SLACK_WEBHOOK_URL": ""})
+        app = create_app({"DATABASE": root / "orders.sqlite3", "SLACK_MOCK": True, "SECRET_KEY": "curl-test-only", "SLACK_WEBHOOK_URL": "", "MENU_SOURCE": "file"})
         server = make_server("127.0.0.1", 0, app, threaded=True)
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()

@@ -65,6 +65,9 @@ ngrok http 8000
 ```dotenv
 SLACK_WEBHOOK_URL=여기에_실제_Slack_Webhook_HTTPS_URL
 SLACK_MOCK=0
+MENU_SOURCE=slack
+SLACK_BOT_TOKEN=여기에_채널_읽기_권한이_있는_Bot_Token
+SLACK_MENU_MESSAGE_URL=여기에_메뉴_공지_메시지_링크
 PORT=8000
 TOKEN_SECRET=
 ```
@@ -73,7 +76,43 @@ URL을 변경한 후 서버를 다시 실행합니다. Webhook URL은 `.env`에�
 
 `SLACK_MOCK=1`이면 **Slack 전송 없이** 콘솔과 로컬 `data/orders.sqlite3`의 `mock_messages` 테이블에 기록합니다. 화면에도 **연습 모드 / 연습 주문 완료 (미전송)**를 표시합니다. **실습의 최종 성공 조건은 반드시 `SLACK_MOCK=0`에서 실제 휴대폰 주문이 Slack에 도착하는 것입니다.**
 
-현재 메뉴는 전달받은 아래 목록을 적용했습니다. 변경은 `app.py`의 `MENUS` 상수에서만 합니다. 메뉴 이미지는 장식용입니다.
+## 메뉴는 Slack 공지에서 읽기
+
+**메뉴 코드와 메뉴명은 서버 코드에 하드코딩하지 않습니다.** `MENU_SOURCE=slack`에서 서버가 Slack API로 지정한 공지 메시지를 읽고, 메시지 안의 JSON 배열을 메뉴 목록으로 사용합니다. 페이지 표시와 주문 검증 모두 이 목록을 기준으로 하며, 클라이언트가 보낸 메뉴명은 무시합니다. 공지를 수정하면 최대 1분 안에 다음 조회에서 반영됩니다. 서버를 재시작하면 캐시가 초기화됩니다.
+
+`.env`에 다음 두 값을 설정하세요.
+
+- `SLACK_MENU_MESSAGE_URL`: **메뉴 공지 메시지**의 ⋮ 메뉴 → **링크 복사**로 얻은 링크. 채널 본문 공지를 사용하며, 댓글에 있는 공지는 지원하지 않습니다.
+- `SLACK_BOT_TOKEN`: 해당 워크스페이스 Slack 앱의 **Bot User OAuth Token**. 이 값은 Webhook URL과 다릅니다. 공개 채널에는 `channels:history`, 비공개 채널에는 `groups:history` 읽기 권한이 필요하며 봇을 메뉴 공지 채널에 초대해야 합니다. 토큰은 `.env`에만 넣고 GitHub나 채팅에 올리지 마세요.
+
+봇 토큰이 없다면 Slack 앱 담당자에게 요청하거나, 권한이 있는 계정으로 [Slack 앱 관리](https://api.slack.com/apps)에서 앱을 만든 뒤 **OAuth & Permissions → Bot Token Scopes**에 필요한 읽기 권한을 추가하고 워크스페이스에 설치합니다. 설치 후 표시되는 Bot User OAuth Token을 사용하세요. 워크스페이스 정책에 따라 관리자 승인이 필요할 수 있습니다. **주문용 Incoming Webhook은 메시지 전송용이어서 공지 조회에 사용할 수 없습니다.**
+
+공지 메시지는 아래처럼 **닫는 `]`까지 있는 완전한 JSON 배열**이어야 합니다. 일반 안내 문구나 코드 블록으로 둘러싸여 있어도 배열을 찾아 읽습니다. 공지에 메뉴 배열이 여러 개 있거나, 코드가 중복되거나, JSON이 잘못되면 메뉴를 표시하지 않고 새 주문을 거부합니다.
+
+```json
+[
+  {"code": "M01", "name": "아이스아메리카노"},
+  {"code": "M02", "name": "아이스라떼"},
+  {"code": "M03", "name": "카페라떼"},
+  {"code": "M04", "name": "말차라떼"},
+  {"code": "M05", "name": "아이스티"}
+]
+```
+
+조회 타임아웃은 5초입니다. Slack 요청 제한을 줄이기 위해 결과와 오류를 60초 캐시하며 동시에 들어오는 조회는 하나로 합칩니다. 캐시가 만료된 뒤 조회가 실패하면 오래된 메뉴나 연습 메뉴로 대체하지 않고 503 오류를 보여 줍니다. 읽기 토큰이나 공지 링크는 화면·API 응답에 노출하지 않습니다. 공지 변경 뒤 이미 처리된 주문 ID를 조회하면 당시 주문 결과를 그대로 반환하고 재전송하지 않습니다.
+
+### Slack 연결 없이 연습하기
+
+아직 읽기 토큰이 없다면 **연습 모드에서만** 별도 JSON 파일을 읽도록 설정할 수 있습니다.
+
+```dotenv
+SLACK_MOCK=1
+MENU_SOURCE=file
+```
+
+이때만 `menus.json`에서 메뉴를 읽으며 파일을 수정하면 다음 페이지 표시·새 주문에 즉시 반영됩니다. 이 파일은 연결 없이 검증하기 위한 데이터이고 실제 Slack 공지를 읽었다는 의미가 아닙니다. `SLACK_MOCK=0` 실제 주문에서는 `MENU_SOURCE=file`을 거부합니다. 실제 과제 테스트는 반드시 `MENU_SOURCE=slack`을 사용하세요.
+
+현재 `menus.json`의 연습 메뉴는 아래와 같습니다. 화면의 컵 그림은 장식용입니다.
 
 | 메뉴 코드 | 메뉴명 |
 | --- | --- |
@@ -129,4 +168,4 @@ python tests/curl_checks.py
 
 실습용 단일 프로세스 서버이며 Flask 디버그 모드는 꺼져 있습니다. 여러 서버 프로세스로 확장하거나 공개 상용 서비스로 운영하는 구성은 범위 밖입니다.
 
-참고: [센서 권한과 HTTPS](https://developer.mozilla.org/en-US/docs/Web/API/DeviceMotionEvent/requestPermission_static), [Slack Incoming Webhooks](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/), [ngrok 빠른 시작](https://ngrok.com/docs/gateway/endpoints/agent-cli-quickstart).
+참고: [센서 권한과 HTTPS](https://developer.mozilla.org/en-US/docs/Web/API/DeviceMotionEvent/requestPermission_static), [Slack 메뉴 조회](https://docs.slack.dev/reference/methods/conversations.history/), [Slack Incoming Webhooks](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/), [ngrok 빠른 시작](https://ngrok.com/docs/gateway/endpoints/agent-cli-quickstart).

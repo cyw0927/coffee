@@ -23,6 +23,7 @@ from dotenv import dotenv_values
 from flask import Flask, jsonify, make_response, render_template, request
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.exceptions import HTTPException
+from menu_source import MenuSourceError, SlackMenuSource, read_mock_menus
 
 ROOT = Path(__file__).resolve().parent
 KST = timezone(timedelta(hours=9))
@@ -30,16 +31,6 @@ TOKEN_TTL = 300
 CHALLENGE_TTL = 60
 SESSION_TTL = 86400
 SLACK_TIMEOUT = 5
-
-# 사용자가 전달한 Slack 공지 메뉴. 변경할 때는 이 상수만 교체하세요.
-MENUS = {
-    "M01": {"name": "아이스아메리카노", "description": "시원하고 깔끔한 커피의 기본", "style": "americano iced"},
-    "M02": {"name": "아이스라떼", "description": "차가운 우유와 진한 에스프레소", "style": "latte iced"},
-    "M03": {"name": "카페라떼", "description": "따뜻하고 부드러운 우유의 풍미", "style": "latte"},
-    "M04": {"name": "말차라떼", "description": "향긋한 말차와 우유의 만남", "style": "matcha"},
-    "M05": {"name": "아이스티", "description": "기분까지 산뜻해지는 시원한 한 잔", "style": "tea iced"},
-}
-
 
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -105,11 +96,31 @@ def create_app(test_config: dict | None = None) -> Flask:
         # Webhook is deliberately read only from .env, never sent to the browser.
         SLACK_WEBHOOK_URL=env.get("SLACK_WEBHOOK_URL") or "",
         SLACK_MOCK=os.getenv("SLACK_MOCK", env.get("SLACK_MOCK") or "0") == "1",
+        MENU_SOURCE=env.get("MENU_SOURCE") or "slack",
+        SLACK_BOT_TOKEN=env.get("SLACK_BOT_TOKEN") or "",
+        SLACK_MENU_MESSAGE_URL=env.get("SLACK_MENU_MESSAGE_URL") or "",
+        MENU_FILE=ROOT / "menus.json",
         DATABASE=ROOT / "data" / "orders.sqlite3",
         MAX_CONTENT_LENGTH=8192,
     )
     if test_config:
         app.config.update(test_config)
+    if app.config["MENU_SOURCE"] not in ("slack", "file"):
+        raise ValueError("MENU_SOURCE를 slack 또는 file로 설정해 주세요.")
+    if app.config["MENU_SOURCE"] == "file" and not app.config["SLACK_MOCK"] and not app.config["TESTING"]:
+        raise ValueError("실제 주문은 MENU_SOURCE=slack으로 설정해 Slack 공지에서 메뉴를 읽어야 합니다.")
+    slack_menus = SlackMenuSource(app.config["SLACK_BOT_TOKEN"], app.config["SLACK_MENU_MESSAGE_URL"])
+
+    def load_menus():
+        if app.config["MENU_SOURCE"] == "file":
+            return read_mock_menus(app.config["MENU_FILE"])
+        return slack_menus.read()
+
+    @app.errorhandler(MenuSourceError)
+    def menu_error(error):
+        if request.path.startswith("/api/"):
+            return jsonify(error=str(error)), 503
+        return render_template("menu_error.html", error=str(error)), 503
     if not app.config["SLACK_MOCK"] and app.config["SLACK_WEBHOOK_URL"]:
         parsed = urlsplit(app.config["SLACK_WEBHOOK_URL"])
         if parsed.scheme != "https" or parsed.netloc != "hooks.slack.com" or not parsed.path.startswith("/services/") or parsed.query or parsed.fragment:
@@ -162,6 +173,17 @@ def create_app(test_config: dict | None = None) -> Flask:
         body = request.get_json(silent=True)
         return body if isinstance(body, dict) else None
 
+    def previous_order(con, existing, order_id, fingerprint):
+        if existing["fingerprint"] != fingerprint:
+            return jsonify(error="같은 주문 ID로 다른 내용을 주문할 수 없습니다."), 409
+        if existing["state"] == "processing":
+            if time.time() - existing["created"] <= 30:
+                return jsonify(order_id=order_id, delivery_status="processing", message="주문 결과를 확인 중입니다."), 202
+            result = {"order_id": order_id, "delivery_status": "unknown", "error": "이 주문의 전송 결과를 확인하지 못했습니다. #커피주문 채널을 확인해 주세요."}
+            con.execute("UPDATE orders SET state='done', http_status=504, result=? WHERE id=?", (json.dumps(result, ensure_ascii=False), order_id))
+            return jsonify(result), 504
+        return jsonify(json.loads(existing["result"])), existing["http_status"]
+
     @app.before_request
     def gate():
         if not mobile_request():
@@ -194,13 +216,17 @@ def create_app(test_config: dict | None = None) -> Flask:
     @app.get("/")
     def index():
         sid = session_id() or secrets.token_urlsafe(24)
-        response = make_response(render_template("index.html", menus=MENUS, mock=app.config["SLACK_MOCK"]))
+        response = make_response(render_template("index.html", menus=load_menus(), mock=app.config["SLACK_MOCK"]))
         # HTTPS tunneling is intentionally detected without trusting proxy headers.
         # HttpOnly + SameSite protects the cookie; Secure is set when the browser uses HTTPS.
         https_origin = request.is_secure or request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip() == "https"
         response.set_cookie("coffee_session", signer.dumps(sid, salt="session"), httponly=True,
                             secure=https_origin, samesite="Strict", max_age=SESSION_TTL)
         return response
+
+    @app.get("/api/menus")
+    def menu_list():
+        return jsonify(menus=[{"code": code, "name": menu["name"]} for code, menu in load_menus().items()])
 
     @app.post("/api/device/challenge")
     def challenge():
@@ -247,7 +273,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         if "|" in name or any(ord(c) < 32 or ord(c) == 127 for c in name):
             return jsonify(error="이름에는 줄바꿈이나 | 기호를 사용할 수 없습니다."), 400
         code = body.get("menu_code")
-        if not isinstance(code, str) or code not in MENUS:
+        if not isinstance(code, str):
             return jsonify(error="목록에 있는 메뉴를 선택해 주세요."), 400
         raw_id = body.get("order_id")
         try:
@@ -258,25 +284,25 @@ def create_app(test_config: dict | None = None) -> Flask:
             return jsonify(error="유효한 UUID 주문 ID가 필요합니다."), 400
         order_id = str(parsed_id)
         fingerprint = hashlib.sha256(json.dumps([name, code], ensure_ascii=False).encode()).hexdigest()
+        # Replays return the original result even if the announcement changed or is unavailable.
+        with connect() as con:
+            existing = con.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
+            if existing:
+                return previous_order(con, existing, order_id, fingerprint)
+        menus = load_menus()
+        if code not in menus:
+            return jsonify(error="메뉴가 변경되었습니다. 페이지를 새로 열고 목록에 있는 메뉴를 선택해 주세요."), 400
         with connect() as con:
             # Durable claim commits before the Slack request. Concurrent requests cannot send twice.
             con.execute("BEGIN IMMEDIATE")
             existing = con.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
             if existing:
-                if existing["fingerprint"] != fingerprint:
-                    return jsonify(error="같은 주문 ID로 다른 내용을 주문할 수 없습니다."), 409
-                if existing["state"] == "processing":
-                    if time.time() - existing["created"] <= 30:
-                        return jsonify(order_id=order_id, delivery_status="processing", message="주문 결과를 확인 중입니다."), 202
-                    result = {"order_id": order_id, "delivery_status": "unknown", "error": "이 주문의 전송 결과를 확인하지 못했습니다. #커피주문 채널을 확인해 주세요."}
-                    con.execute("UPDATE orders SET state='done', http_status=504, result=? WHERE id=?", (json.dumps(result, ensure_ascii=False), order_id))
-                    return jsonify(result), 504
-                return jsonify(json.loads(existing["result"])), existing["http_status"]
+                return previous_order(con, existing, order_id, fingerprint)
             if not app.config["SLACK_MOCK"] and not app.config["SLACK_WEBHOOK_URL"]:
                 return jsonify(error="서버의 Slack Webhook이 설정되지 않았습니다. 관리자에게 알려 주세요."), 503
             con.execute("INSERT INTO orders (id, fingerprint, state, created) VALUES (?, ?, 'processing', ?)", (order_id, fingerprint, time.time()))
 
-        menu_name = MENUS[code]["name"]  # Never trust a submitted menu name.
+        menu_name = menus[code]["name"]  # Look up the source; never trust a submitted menu name.
         stamp = datetime.now(KST).strftime("%H:%M")
         display_text = f"{name} | {code} | {menu_name} | {stamp}"
         safe_text = f"{html.escape(name, quote=False)} | {code} | {html.escape(menu_name, quote=False)} | {stamp}"
@@ -321,4 +347,9 @@ if __name__ == "__main__":
         print(f"스마트폰 접속 주소: http://{ip}:{port}", flush=True)
     print("센서 인증에는 HTTPS가 필요합니다. ngrok http " + str(port), flush=True)
     print("모드: " + ("연습 (Slack 미전송)" if application.config["SLACK_MOCK"] else "실제 Slack 주문"), flush=True)
+    if application.config["MENU_SOURCE"] == "slack":
+        ready = bool(application.config["SLACK_BOT_TOKEN"] and application.config["SLACK_MENU_MESSAGE_URL"])
+        print("메뉴 출처: Slack 공지" + ("" if ready else " — .env에 Bot 토큰과 메뉴 공지 링크를 설정해 주세요."), flush=True)
+    else:
+        print("메뉴 출처: 연습용 menus.json (실제 Slack 공지 조회 아님)", flush=True)
     application.run(host="0.0.0.0", port=port, debug=False, threaded=True, use_reloader=False)

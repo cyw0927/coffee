@@ -29,7 +29,7 @@ class OrdersTest(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.db = Path(self.directory.name) / "orders.sqlite3"
-        self.app = create_app({"TESTING": True, "SECRET_KEY": "test-only-secret", "DATABASE": self.db, "SLACK_MOCK": True, "SLACK_WEBHOOK_URL": ""})
+        self.app = create_app({"TESTING": True, "SECRET_KEY": "test-only-secret", "DATABASE": self.db, "SLACK_MOCK": True, "SLACK_WEBHOOK_URL": "", "MENU_SOURCE": "file"})
         self.client = self.app.test_client()
         self.client.get("/", headers=HEADERS)
         self.token = self.authenticate()
