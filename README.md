@@ -76,7 +76,7 @@ ngrok이 보여 주는 `https://...` 주소를 스마트폰에서 열면 됩니�
 서버에서 다시 검증합니다.
 
 - 이름: 공백 거부, 20자 제한, Slack 멘션/링크용 특수문자 이스케이프
-- 메뉴: 클라이언트 메뉴명을 신뢰하지 않고 `menu_code`로 서버 상수에서 조회
+- 메뉴: 앱 코드에 하드코딩하지 않고 메뉴 로더에서 조회. `SLACK_BOT_TOKEN` + `SLACK_MENU_CHANNEL_ID`가 있으면 Slack 채널의 최신 JSON 메뉴 공지를 읽고, 없거나 읽기 실패 시 `menus.json`을 사용
 - Slack: 5초 타임아웃, HTTP 200이 아니면 실패 처리
 - 중복 방지: 브라우저가 UUID v4 주문 ID 생성 + 서버가 처리 결과 캐시. 같은 ID는 Slack 재전송 없이 기존 결과 반환
 
@@ -117,3 +117,13 @@ bash scripts/curl_checks.sh
 ## 한계
 
 브라우저만으로 “진짜 스마트폰”을 완벽하게 증명하는 것은 불가능합니다. User-Agent, Client Hint, 터치 정보와 JavaScript 센서 이벤트는 충분한 기술 지식이 있으면 위조될 수 있습니다. 이 앱은 일반적인 PC 브라우저 및 개발자 도구의 단순 모바일 에뮬레이션을 여러 신호로 막는 실습용 방어이며, 보안 하드웨어 기반 기기 증명(attestation)은 아닙니다.
+
+
+## 메뉴 소스
+
+앱 코드 안에는 메뉴 목록을 직접 하드코딩하지 않습니다.
+
+- 기본: `menus.json` 파일을 읽음
+- Slack 읽기 권한이 있을 때: `SLACK_BOT_TOKEN`과 `SLACK_MENU_CHANNEL_ID`를 설정하면 `conversations.history`로 최신 메시지 중 JSON 배열 형태의 메뉴 공지를 찾아 읽음
+- Incoming Webhook URL은 주문을 **보내는 용도**라 채널 메시지를 읽을 수 없음
+- Slack 메뉴 조회 결과는 기본 30초 캐시
