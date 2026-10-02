@@ -91,11 +91,11 @@
   async function loadMenus() {
     try {
       const menus = await jsonFetch('/api/menus');
-      menuList.innerHTML = menus.map((m) => \`
+      menuList.innerHTML = menus.map((m) => `
         <label class="menu">
-          <input type="radio" name="menu" value="\${m.code}">
-          <span><span class="code">\${m.code}</span><span class="name">\${m.name}</span></span>
-        </label>\`).join('');
+          <input type="radio" name="menu" value="${m.code}">
+          <span><span class="code">${m.code}</span><span class="name">${m.name}</span></span>
+        </label>`).join('');
     } catch (err) {
       menuList.textContent = err.message;
     }
@@ -103,7 +103,7 @@
 
   function setDeviceMessage(message, kind = '') {
     deviceStatus.textContent = message;
-    deviceStatus.className = \`status \${kind}\`;
+    deviceStatus.className = `status ${kind}`;
   }
 
   function waitForSensorSample(timeoutMs = 6500) {
@@ -206,7 +206,7 @@
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     const hex = [...bytes].map(b => b.toString(16).padStart(2, '0'));
-    return \`\${hex.slice(0,4).join('')}-\${hex.slice(4,6).join('')}-\${hex.slice(6,8).join('')}-\${hex.slice(8,10).join('')}-\${hex.slice(10,16).join('')}\`;
+    return `${hex.slice(0,4).join('')}-${hex.slice(4,6).join('')}-${hex.slice(6,8).join('')}-${hex.slice(8,10).join('')}-${hex.slice(10,16).join('')}`;
   }
 
   orderBtn.addEventListener('click', async () => {
